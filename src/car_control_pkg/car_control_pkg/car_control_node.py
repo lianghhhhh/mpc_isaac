@@ -67,17 +67,24 @@ class CarControlNode(Node):
 
     def publish_control_command(self, control_input):
         self.get_logger().info(f'Publishing control command: {control_input}')
+        
+        # Based on utils.py, your indices are:
+        # 0: Front Left, 1: Front Right, 2: Rear Left, 3: Rear Right
+        
+        # FIX: Multiply by -1 AND swap the left and right wheels
+        fl = -float(control_input[1]) # Assign inverted Front Right to Front Left
+        fr = -float(control_input[0]) # Assign inverted Front Left to Front Right
+        rl = -float(control_input[3]) # Assign inverted Rear Right to Rear Left
+        rr = -float(control_input[2]) # Assign inverted Rear Left to Rear Right
+
         front_msg = Float64MultiArray()
         rear_msg = Float64MultiArray()
-        vals = [float(-x) for x in control_input] # flip control direction if needed
-        # msg = Float64MultiArray()
-        # vals = [float(-x) for x in control_input] # flip control direction if needed
-        # msg.data = vals
-        front_msg.data = vals[0:2]
-        rear_msg.data = vals[2:4]
+        
+        front_msg.data = [fl, fr]
+        rear_msg.data = [rl, rr]
+        
         self.front_wheel_pub.publish(front_msg)
         self.rear_wheel_pub.publish(rear_msg)
-        # self.wheel_vel_pub.publish(msg)
 
     def publish_predicted_path(self, predicted_path):
         msg = Float64MultiArray()

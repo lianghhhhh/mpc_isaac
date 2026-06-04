@@ -1,5 +1,5 @@
 {
-    "model_path": "/home/liangh/mpc/model/new_car_model",
+    "model_path": "/home/liangh/mpc_isaac/model/new_car_model",
     "N_steps": 50,
     "dt": 0.01,
     "control_limits": {

@@ -11,7 +11,7 @@ from car_control_pkg.car_predictor import CarPredictor
 from acados_template import AcadosOcp, AcadosOcpSolver, AcadosModel
 
 def loadConfig():
-    with open('/home/liangh/mpc/config.json', 'r') as f:
+    with open('/home/liangh/mpc_isaac/config.json', 'r') as f:
         config = json.load(f)
     return config
 
@@ -49,20 +49,39 @@ def _wheel_pair_from_control(u_sym):
 def _build_nn_input(x_sym, u_sym):
     current_left_velocity = x_sym[4]
     current_right_velocity = x_sym[5]
-    next_left_velocity, next_right_velocity = _wheel_pair_from_control(u_sym)
+    
+    target_left_velocity, target_right_velocity = _wheel_pair_from_control(u_sym)
+    
+    # Must match the training input vector order: [cmd_l, cmd_r, curr_vel_l, curr_vel_r]
     return ca.vertcat(
+        target_left_velocity,
+        target_right_velocity,
         current_left_velocity,
         current_right_velocity,
-        next_left_velocity,
-        next_right_velocity,
     )
 
 def _predict_next_state(x_sym, u_sym, delta_sym):
-    heading = ca.atan2(x_sym[2], x_sym[3])
-    x_pos_next = x_sym[0] + delta_sym[0]
-    z_pos_next = x_sym[1] + delta_sym[1]
-    next_heading = heading + delta_sym[2]
-    next_heading = ca.atan2(ca.sin(next_heading), ca.cos(next_heading))  # normalize to [-pi, pi]
+    # Retrieve current heading trigonometric components
+    sin_theta = x_sym[2]
+    cos_theta = x_sym[3]
+    
+    # NN outputs local frame changes
+    local_x = delta_sym[0]
+    local_y = delta_sym[1]
+    delta_heading = delta_sym[2]
+    
+    # Transform local deltas back to the global frame
+    global_delta_x = local_x * cos_theta - local_y * sin_theta
+    global_delta_y = local_x * sin_theta + local_y * cos_theta
+    
+    x_pos_next = x_sym[0] + global_delta_x
+    z_pos_next = x_sym[1] + global_delta_y
+    
+    # Update heading securely
+    heading = ca.atan2(sin_theta, cos_theta + 1e-9)
+    next_heading = heading + delta_heading
+    next_heading = ca.atan2(ca.sin(next_heading), ca.cos(next_heading))  # Normalize to [-pi, pi]
+    
     next_left_velocity, next_right_velocity = _wheel_pair_from_control(u_sym)
 
     return ca.vertcat(
@@ -85,7 +104,6 @@ def angleToDegree(data):
     return data
 
 def loadModelFunc(model_path, dt):
-    # OPTIMIZATION: Prevent PyTorch from wasting cycles managing multi-threading
     torch.set_num_threads(1)
     torch.set_num_interop_threads(1)
 
@@ -97,7 +115,10 @@ def loadModelFunc(model_path, dt):
     model.eval()
     
     l4c_model = l4c.L4CasADi(model, device=device)
-    nn_input_sym = ca.SX.sym('nn_input', 4)
+    
+    # FIX: Change from SX to MX
+    nn_input_sym = ca.MX.sym('nn_input', 4) 
+    
     delta_sym = l4c_model(nn_input_sym.T).T
     nn_model_func = ca.Function('nn_model_func', [nn_input_sym], [delta_sym], ['nn_input'], ['delta_x'])
 
@@ -133,7 +154,7 @@ def createMpcSolver(nn_model_func, N=10, dt=0.1):
         x_next_pred_t = _predict_next_state(x_t.T, u_t.T, delta_t)
         opti.subject_to(next_x_pred[t+1, :] == x_next_pred_t.T)
     opti.subject_to(next_x_pred[0, :] == current_x.T)
-    opti.subject_to(opti.bounded(-1.0, u_pred, 1.0))
+    opti.subject_to(opti.bounded(-30.0, u_pred, 30.0))
     opts = {"ipopt.print_level":0, "print_time":0}
     opti.solver('ipopt', opts)
     return opti, u_pred, next_x_pred, current_x, current_wheel, target_path
@@ -143,9 +164,9 @@ def createAcadosSolver(nn_model_func, lib_dir, lib_name, N, dt):
     model = AcadosModel()
     model.name = 'car_model'
 
-    x = ca.SX.sym('x', 6)
-    u = ca.SX.sym('u', 4)
-    p = ca.SX.sym('p', 2)
+    x = ca.MX.sym('x', 6)  
+    u = ca.MX.sym('u', 4)  
+    p = ca.MX.sym('p', 2)
     nn_input = _build_nn_input(x, u)
     delta_sym = nn_model_func(nn_input)
     x_next = _predict_next_state(x, u, delta_sym)
@@ -184,8 +205,8 @@ def createAcadosSolver(nn_model_func, lib_dir, lib_name, N, dt):
 
     ocp.constraints.x0 = np.zeros(6)
     ocp.parameter_values = np.zeros(2)
-    ocp.constraints.lbu = np.array([-1.0, -1.0, -1.0, -1.0])
-    ocp.constraints.ubu = np.array([1.0, 1.0, 1.0, 1.0])
+    ocp.constraints.lbu = np.array([-30.0, -30.0, -30.0, -30.0])
+    ocp.constraints.ubu = np.array([30.0, 30.0, 30.0, 30.0])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3])
 
     ocp.solver_options.integrator_type = 'DISCRETE'

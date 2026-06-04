@@ -69,6 +69,6 @@ if [ -n "${BASH:-}" -o -n "${ZSH_VERSION:-}" ] ; then
 fi
 
 
-export ACADOS_SOURCE_DIR=/home/liangh/mpc/acados
-export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/liangh/mpc/acados/lib
-export PYTHONPATH=/home/liangh/mpc/mpc_venv/lib/python3.10/site-packages:$PYTHONPATH
+export ACADOS_SOURCE_DIR=/home/liangh/mpc_isaac/acados
+export LD_LIBRARY_PATH=$LD_LIBRARY_PATH:/home/liangh/mpc_isaac/acados/lib
+export PYTHONPATH=/home/liangh/mpc_isaac/mpc_venv/lib/python3.10/site-packages:$PYTHONPATH
