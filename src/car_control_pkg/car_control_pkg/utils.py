@@ -166,7 +166,10 @@ def createAcadosSolver(nn_model_func, lib_dir, lib_name, N, dt):
 
     x = ca.MX.sym('x', 6)  
     u = ca.MX.sym('u', 4)  
-    p = ca.MX.sym('p', 2)
+    
+    # FIX 1: Expand parameter vector to size 4 to catch the new heading targets
+    p = ca.MX.sym('p', 4)
+    
     nn_input = _build_nn_input(x, u)
     delta_sym = nn_model_func(nn_input)
     x_next = _predict_next_state(x, u, delta_sym)
@@ -178,33 +181,35 @@ def createAcadosSolver(nn_model_func, lib_dir, lib_name, N, dt):
     ocp.model = model
 
     ocp.solver_options.N_horizon = N
-    Tf = N * dt  # (N steps) * (dt s/step)
-    ocp.solver_options.tf = Tf
+    ocp.solver_options.tf = N * dt
 
-    Q_pos = np.diag([1000.0, 1000.0]) # Position cost
-    R_ctrl = np.diag([0.01, 0.01, 0.01, 0.01]) # Control effort cost
+    # FIX 2: Add heading weights to the Q matrix
+    # [X_weight, Y_weight, Sin_weight, Cos_weight]
+    Q_pos = np.diag([1000.0, 1000.0, 50.0, 50.0]) 
+    R_ctrl = np.diag([0.1, 0.1, 0.1, 0.1]) 
 
-    position_error = x[:2] - p[:2]
+    # FIX 3: Calculate the error for all 4 spatial variables
+    # x[0:2] are X,Y and x[2:4] are Sin,Cos
+    state_error = ca.vertcat(x[0] - p[0], x[1] - p[1], x[2] - p[2], x[3] - p[3])
 
-    stage_cost_expr = ca.mtimes([position_error.T, ca.DM(Q_pos), position_error]) \
+    stage_cost_expr = ca.mtimes([state_error.T, ca.DM(Q_pos), state_error]) \
                       + ca.mtimes([u.T, ca.DM(R_ctrl), u])
 
-    terminal_cost_expr = ca.mtimes([position_error.T, ca.DM(Q_pos), position_error])
+    terminal_cost_expr = ca.mtimes([state_error.T, ca.DM(Q_pos), state_error])
 
-    # --- Set cost for STAGE 0 ---
     ocp.cost.cost_type_0 = 'EXTERNAL'
     ocp.model.cost_expr_ext_cost_0 = stage_cost_expr
-
-    # --- Set cost for STAGES 1 to N-1 ---
     ocp.cost.cost_type = 'EXTERNAL'
     ocp.model.cost_expr_ext_cost = stage_cost_expr
-
-    # --- Set cost for STAGE N (Terminal) ---
     ocp.cost.cost_type_e = 'EXTERNAL'
     ocp.model.cost_expr_ext_cost_e = terminal_cost_expr
 
     ocp.constraints.x0 = np.zeros(6)
-    ocp.parameter_values = np.zeros(2)
+    
+    # FIX 4: Ensure the default parameter initialization matches the new size 4
+    ocp.parameter_values = np.zeros(4)
+    
+    # Keep your custom boundaries here...
     ocp.constraints.lbu = np.array([-30.0, -30.0, -30.0, -30.0])
     ocp.constraints.ubu = np.array([30.0, 30.0, 30.0, 30.0])
     ocp.constraints.idxbu = np.array([0, 1, 2, 3])

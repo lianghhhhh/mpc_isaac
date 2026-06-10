@@ -39,26 +39,33 @@ class CarControlNode(Node):
         self.create_timer(self._timer_period, self.find_control_command)
 
     def _build_reference_path(self, nearest_points, horizon_size):
-        path = np.array([[point.x, point.y] for point in nearest_points], dtype=float)
+        # Extract x, y, and convert angle to sin/cos to match your solver's state variables
+        path = np.array([
+            [point.x, point.y, np.sin(point.angle), np.cos(point.angle)] 
+            for point in nearest_points
+        ], dtype=float)
 
         if path.shape[0] >= horizon_size:
             return path[:horizon_size]
 
         if len(nearest_points) >= 2:
-            step = np.array(
-                [nearest_points[-1].x - nearest_points[-2].x, nearest_points[-1].y - nearest_points[-2].y],
-                dtype=float,
-            )
-            if np.linalg.norm(step) < 1e-6:
-                step = np.array(
-                    [np.cos(nearest_points[-1].angle), np.sin(nearest_points[-1].angle)],
-                    dtype=float,
-                ) * 0.1
+            step_x = nearest_points[-1].x - nearest_points[-2].x
+            step_y = nearest_points[-1].y - nearest_points[-2].y
+            # For the projected steps, we keep the heading of the final known point (change is 0.0)
+            step = np.array([step_x, step_y, 0.0, 0.0], dtype=float)
+            
+            if np.linalg.norm([step_x, step_y]) < 1e-6:
+                step = np.array([
+                    np.cos(nearest_points[-1].angle) * 0.1, 
+                    np.sin(nearest_points[-1].angle) * 0.1, 
+                    0.0, 0.0
+                ], dtype=float)
         else:
-            step = np.array(
-                [np.cos(nearest_points[-1].angle), np.sin(nearest_points[-1].angle)],
-                dtype=float,
-            ) * 0.1
+            step = np.array([
+                np.cos(nearest_points[-1].angle) * 0.1, 
+                np.sin(nearest_points[-1].angle) * 0.1, 
+                0.0, 0.0
+            ], dtype=float)
 
         while path.shape[0] < horizon_size:
             path = np.vstack([path, path[-1] + step])
@@ -88,8 +95,21 @@ class CarControlNode(Node):
 
     def publish_predicted_path(self, predicted_path):
         msg = Float64MultiArray()
+        pos = []
         vals = predicted_path.flatten().tolist()
-        msg.data = vals
+        # The solver state is [x, y, sin(yaw), cos(yaw), vel_left, vel_right].
+        # Only publish pose information to the path topic.
+        for i in range(0, len(vals), 6):
+            if i + 3 >= len(vals):
+                break
+            x, y, sin, cos = vals[i], vals[i+1], vals[i+2], vals[i+3]
+            angle = np.arctan2(sin, cos)
+            pos.append(x)
+            pos.append(y)
+            pos.append(angle)
+            
+        msg.data = pos[:10]  # Limit to first 10 states (5 poses) for visualization
+        # self.get_logger().info(f'Publishing predicted path: {msg.data}')
         self.pred_path_pub.publish(msg)
 
     def find_control_command(self):
